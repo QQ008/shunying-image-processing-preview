@@ -66,14 +66,28 @@ class AppInitializer:
             
             # 创建原图信息表
             self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS original_images (
+            CREATE TABLE IF NOT EXISTS images (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                image_path TEXT NOT NULL,
-                image_name TEXT NOT NULL,
-                remark TEXT,
+                original_filename TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                preview_path TEXT,
+                upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                capture_time DATETIME,
+                width INTEGER,
+                height INTEGER,
+                camera_model TEXT,
+                lens_model TEXT,
+                shutter_speed TEXT,
+                aperture TEXT,
+                iso TEXT,
+                exposure_compensation TEXT,
+                white_balance TEXT,
+                gps_latitude TEXT,
+                gps_longitude TEXT,
                 status TEXT DEFAULT 'success',
-                error_message TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                remark TEXT,
+                error_message TEXT
             )
             ''')
             
@@ -89,7 +103,7 @@ class AppInitializer:
                 error_message TEXT,
                 remark TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (original_id) REFERENCES original_images (id)
+                FOREIGN KEY (original_id) REFERENCES images (id)
             )
             ''')
             

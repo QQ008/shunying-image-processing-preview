@@ -50,6 +50,7 @@ class ImageProcessor(QThread):
         else:
             # 确保输出目录存在
             if self.keep_original:
+                # 保留原图模式：创建输出目录用于保存处理后的图片
                 if not os.path.exists(self.output_dir):
                     os.makedirs(self.output_dir)
                     self.update_log.emit(f"创建输出目录: {self.output_dir}")
@@ -60,7 +61,7 @@ class ImageProcessor(QThread):
                     os.makedirs(error_dir)
                     self.update_log.emit(f"创建错误图片目录: {error_dir}")
             else:
-                # 如果不保留原图，使用第一张图片所在目录作为默认错误图片目录
+                # 不保留原图模式：使用原图所在目录作为输出和错误目录
                 if self.image_files:
                     first_img_dir = os.path.dirname(self.image_files[0])
                     error_dir = os.path.join(first_img_dir, "error")
@@ -91,32 +92,34 @@ class ImageProcessor(QThread):
                     
                     # 将信息写入数据库
                     cursor.execute(
-                        "INSERT INTO original_images (image_path, image_name, remark, status) VALUES (?, ?, ?, ?)",
-                        (image_file, file_name, "导入原图信息", "success")
+                        "INSERT INTO images (original_filename, file_name, file_path, upload_time) VALUES (?, ?, ?, ?)",
+                        (file_name, file_name, image_file, datetime.now())
                     )
                     continue
                 
-                # 读取图片
-                self.update_log.emit(f"正在处理: {file_name}")
-                img = cv2.imread(image_file)
-                
-                if img is None:
-                    error_msg = f"无法读取图片 {file_name}"
-                    self.update_log.emit(f"错误: {error_msg}")
-                    self.handle_error_image(image_file, error_dir, error_msg, cursor)
-                    continue
-                
-                # 根据选项生成新文件名
+                # 确定新文件名
                 if self.rename_option == 1:  # 时间戳
+                    # 时间戳模式不需要读取图片内容，直接生成时间戳
                     timestamp = int(time.time() * 1000)
                     # 检查是否同一秒有多张图片
                     count = 0
                     new_filename = f"{timestamp}{file_ext}"
-                    while os.path.exists(os.path.join(self.output_dir, new_filename)):
+                    output_dir = self.output_dir if self.keep_original else os.path.dirname(image_file)
+                    while os.path.exists(os.path.join(output_dir, new_filename)):
                         count += 1
                         new_filename = f"{timestamp}_{count}{file_ext}"
                 else:  # 哈希重命名
-                    img_hash = hashlib.md5(img.tobytes()).hexdigest()
+                    # 使用文件内容计算哈希，无论是否保留原图
+                    self.update_log.emit(f"计算文件哈希: {file_name}")
+                    try:
+                        with open(image_file, 'rb') as f:
+                            img_hash = hashlib.md5(f.read()).hexdigest()
+                    except Exception as e:
+                        error_msg = f"无法读取文件进行哈希计算: {str(e)}"
+                        self.update_log.emit(f"错误: {error_msg}")
+                        self.handle_error_image(image_file, error_dir, error_msg, cursor)
+                        continue
+                        
                     new_filename = f"{img_hash}{file_ext}"
                 
                 # 添加前缀
@@ -125,34 +128,47 @@ class ImageProcessor(QThread):
                 
                 # 确定保存路径
                 if self.keep_original:
-                    # 如果保留原图，使用指定的输出目录
+                    # 如果保留原图，使用指定的输出目录保存处理后图片
                     output_path = os.path.join(self.output_dir, new_filename)
+                    
+                    # 复制文件到新位置，而不是加载和保存图片
+                    try:
+                        shutil.copy2(image_file, output_path)
+                        self.update_log.emit(f"已保存处理后图片到: {output_path}，原图保持不变")
+                    except Exception as e:
+                        error_msg = f"复制文件失败: {str(e)}"
+                        self.update_log.emit(f"错误: {error_msg}")
+                        self.handle_error_image(image_file, error_dir, error_msg, cursor)
+                        continue
                 else:
-                    # 如果不保留原图，在原图的同目录下处理
+                    # 如果不保留原图，直接重命名原图（不创建新文件）
                     output_path = os.path.join(os.path.dirname(image_file), new_filename)
+                    
+                    # 先删除目标路径如果已存在（可能发生在同一目录处理多张图片时）
+                    if os.path.exists(output_path) and image_file != output_path:
+                        os.remove(output_path)
+                    
+                    # 如果目标文件名与原文件名不同，则重命名文件
+                    if os.path.basename(image_file) != new_filename:
+                        try:
+                            os.rename(image_file, output_path)
+                            self.update_log.emit(f"已将原图重命名为: {new_filename}")
+                        except Exception as e:
+                            error_msg = f"重命名文件失败: {str(e)}"
+                            self.update_log.emit(f"错误: {error_msg}")
+                            self.handle_error_image(image_file, error_dir, error_msg, cursor)
+                            continue
+                    else:
+                        self.update_log.emit(f"文件名未改变: {new_filename}")
                 
-                # 保存图片
-                cv2.imwrite(output_path, img)
-                self.update_log.emit(f"已保存到: {output_path}")
+                # 确保路径使用标准格式，避免路径分隔符问题
+                normalized_path = os.path.normpath(output_path)
                 
                 # 将信息写入数据库
                 cursor.execute(
-                    "INSERT INTO original_images (image_path, image_name, remark, status) VALUES (?, ?, ?, ?)",
-                    (output_path, new_filename, f"从 {file_name} 处理", "success")
+                    "INSERT INTO images (original_filename, file_name, file_path, upload_time) VALUES (?, ?, ?, ?)",
+                    (file_name, new_filename, normalized_path, datetime.now())
                 )
-                
-                # 如果需要保留原图且重命名选项不是0
-                if self.keep_original:
-                    if image_file != output_path:  # 避免源和目标相同
-                        original_copy = os.path.join(self.output_dir, f"O_{file_name}")
-                        shutil.copy2(image_file, original_copy)
-                        self.update_log.emit(f"已保留原图: {original_copy}")
-                        
-                        # 记录原图信息
-                        cursor.execute(
-                            "INSERT INTO original_images (image_path, image_name, remark, status) VALUES (?, ?, ?, ?)",
-                            (original_copy, f"O_{file_name}", "原图备份", "success")
-                        )
             
             except Exception as e:
                 error_msg = str(e)
@@ -186,10 +202,13 @@ class ImageProcessor(QThread):
             shutil.copy2(image_file, error_path)
             self.update_log.emit(f"已将出错图片复制到: {error_path}")
             
+            # 确保路径使用标准格式
+            normalized_path = os.path.normpath(error_path)
+            
             # 记录到数据库
             cursor.execute(
-                "INSERT INTO original_images (image_path, image_name, remark, status, error_message) VALUES (?, ?, ?, ?, ?)",
-                (error_path, file_name, "处理失败的图片", "error", error_msg)
+                "INSERT INTO images (original_filename, file_name, file_path, status, error_message, upload_time) VALUES (?, ?, ?, ?, ?, ?)",
+                (file_name, file_name, normalized_path, "error", error_msg, datetime.now())
             )
             
         except Exception as e:
@@ -237,7 +256,8 @@ class ImageProcessorApp(QMainWindow):
         # 连接重命名选项变化的信号
         self.rename_group.buttonClicked.connect(self.toggle_rename_options)
         
-        self.rename_timestamp.setChecked(True)
+        # 修改默认选择为哈希重命名
+        self.rename_hash.setChecked(True)
         
         rename_layout.addWidget(self.rename_none)
         rename_layout.addWidget(self.rename_timestamp)
@@ -256,6 +276,9 @@ class ImageProcessorApp(QMainWindow):
         self.prefix_combo.addItem("预览图 (P)", "P")
         self.prefix_combo.addItem("封面图 (C)", "C")
         
+        # 设置默认选项为原图(O)
+        self.prefix_combo.setCurrentIndex(1)
+        
         prefix_layout.addWidget(self.prefix_combo)
         prefix_group.setLayout(prefix_layout)
         settings_layout.addWidget(prefix_group)
@@ -264,7 +287,7 @@ class ImageProcessorApp(QMainWindow):
         other_group = QGroupBox("其他选项")
         other_layout = QVBoxLayout()
         
-        self.keep_original = QCheckBox("保留原图")
+        self.keep_original = QCheckBox("保留原图（处理后图片保存到输出目录）")
         self.keep_original.setChecked(True)
         self.keep_original.stateChanged.connect(self.toggle_output_dir)
         
@@ -312,7 +335,10 @@ class ImageProcessorApp(QMainWindow):
         self.check_database()
         
         # 初始化界面控件状态
-        self.toggle_rename_options(self.rename_timestamp)
+        self.toggle_rename_options(self.rename_hash)
+        
+        # 确保选择输出目录按钮初始状态正确
+        self.output_btn.setEnabled(self.keep_original.isChecked())
     
     def toggle_rename_options(self, button):
         """根据重命名选项切换其他设置的可用性"""
@@ -353,9 +379,13 @@ class ImageProcessorApp(QMainWindow):
         self.output_btn.setEnabled(is_enabled)
         
         if is_enabled:
-            self.output_label.setText(self.output_dir)
+            # 检查是否已选择有效的输出目录
+            if os.path.exists(self.output_dir) and self.output_dir != os.getcwd():
+                self.output_label.setText(self.output_dir)
+            else:
+                self.output_label.setText("请选择输出目录（不能使用程序当前目录）")
         else:
-            self.output_label.setText("将在原图所在目录处理")
+            self.output_label.setText("将直接对原图进行重命名")
         
         self.update_process_button()
     
@@ -416,7 +446,15 @@ class ImageProcessorApp(QMainWindow):
                 self.process_btn.setEnabled(True)
             # 如果保留原图，需要检查输出目录
             elif self.keep_original.isChecked():
-                self.process_btn.setEnabled(os.path.exists(self.output_dir))
+                # 确保已选择输出目录且目录存在
+                has_output_dir = os.path.exists(self.output_dir) and self.output_dir != os.getcwd()
+                self.process_btn.setEnabled(has_output_dir)
+                
+                # 显示警告信息如果未选择输出目录
+                if not has_output_dir:
+                    self.output_label.setText("请选择输出目录（不能使用程序当前目录）")
+                else:
+                    self.output_label.setText(self.output_dir)
             else:
                 # 如果不保留原图，直接启用处理按钮
                 self.process_btn.setEnabled(True)
@@ -439,6 +477,17 @@ class ImageProcessorApp(QMainWindow):
                 QMessageBox.Ok
             )
             return
+            
+        # 如果选择了保留原图，检查是否已选择输出目录
+        if rename_option != 0 and keep_original:
+            if not os.path.exists(self.output_dir) or self.output_dir == os.getcwd():
+                QMessageBox.warning(
+                    self, 
+                    '未选择输出目录', 
+                    '选择保留原图选项时，必须指定一个有效的输出目录（不能是程序当前目录）',
+                    QMessageBox.Ok
+                )
+                return
         
         # 禁用界面控件
         self.select_btn.setEnabled(False)
