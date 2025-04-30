@@ -4,6 +4,7 @@ import time
 import shutil
 import hashlib
 import sqlite3
+import json
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QFileDialog, QLabel, 
@@ -218,8 +219,41 @@ class ImageProcessorApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.image_files = []
-        self.db_path = 'images.db'
+        
+        # 从配置文件中读取数据库路径
+        self.config_path = 'config.json'
+        self.db_path = 'images.db'  # 默认路径
+        
         self.initUI()
+        self.load_config()  # 载入配置
+        self.check_database()  # 检查数据库
+    
+    def load_config(self):
+        """从配置文件加载配置"""
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    
+                # 检查数据库配置是否存在
+                if 'database' in config and 'path' in config['database']:
+                    self.db_path = config['database']['path']
+                    self.log(f"已从配置文件加载数据库路径: {self.db_path}")
+            else:
+                self.log(f"配置文件 {self.config_path} 不存在，使用默认数据库路径")
+        except Exception as e:
+            self.log(f"加载配置失败: {e}，使用默认数据库路径")
+    
+    def check_database(self):
+        """检查数据库是否存在，不存在则提示用户初始化"""
+        if not os.path.exists(self.db_path):
+            self.log("数据库文件不存在，请先运行初始化程序 (init_app.py)")
+            QMessageBox.warning(
+                self, 
+                '数据库未初始化', 
+                '数据库文件不存在，请先运行初始化程序 (init_app.py)',
+                QMessageBox.Ok
+            )
     
     def initUI(self):
         self.setWindowTitle('图片处理工具')
@@ -332,7 +366,6 @@ class ImageProcessorApp(QMainWindow):
         self.output_label.setText(self.output_dir)
         
         self.log("应用已启动")
-        self.check_database()
         
         # 初始化界面控件状态
         self.toggle_rename_options(self.rename_hash)
@@ -388,17 +421,6 @@ class ImageProcessorApp(QMainWindow):
             self.output_label.setText("将直接对原图进行重命名")
         
         self.update_process_button()
-    
-    def check_database(self):
-        """检查数据库是否存在，不存在则提示用户初始化"""
-        if not os.path.exists(self.db_path):
-            self.log("数据库文件不存在，请先运行初始化程序 (init_app.py)")
-            QMessageBox.warning(
-                self, 
-                '数据库未初始化', 
-                '数据库文件不存在，请先运行初始化程序 (init_app.py)',
-                QMessageBox.Ok
-            )
     
     def log(self, message):
         """添加日志信息"""

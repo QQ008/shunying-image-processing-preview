@@ -78,7 +78,7 @@ class AppInitializer:
             logger.error("PyTorch未安装，请安装PyTorch")
             return False
         
-        # 创建默认配置 - 移除图片重命名相关配置，只保留系统信息和推理模式设置
+        # 创建默认配置
         self.config = {
             'use_gpu': torch.cuda.is_available(),
             'gpu_device': 0 if torch.cuda.is_available() and torch.cuda.device_count() > 0 else -1,
@@ -86,6 +86,10 @@ class AppInitializer:
             'exif_extraction': {
                 'extract_all': True,
                 'csv_output_dir': os.path.join(os.getcwd(), 'exif_data')
+            },
+            'database': {
+                'path': self.db_path,
+                'location': os.path.abspath(self.db_path)
             },
             'system_info': self.system_info
         }
@@ -164,6 +168,7 @@ class AppInitializer:
                 height INTEGER,
                 camera_model TEXT,
                 lens_model TEXT,
+                focal_length TEXT,
                 shutter_speed TEXT,
                 aperture TEXT,
                 iso TEXT,
